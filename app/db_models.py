@@ -8,3 +8,4 @@ class Workout(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     duration_minutes = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=False, index=True)

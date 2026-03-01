@@ -19,6 +19,9 @@ def get_db():
     finally:
         db.close()
 
+def get_current_user_id():
+    return 1  # Placeholder for user authentication logic
+
 
 class WorkoutCreate(BaseModel):
     title: str
@@ -44,24 +47,40 @@ def root():
 
 
 @app.get("/workouts", response_model=list[WorkoutResponse])
-def get_workouts(db: Session = Depends(get_db)):
-    return crud.get_workouts(db)
+def get_workouts(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    return crud.get_workouts(db, user_id)
 
 
 @app.post("/workouts", response_model=WorkoutResponse, status_code=201)
-def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
-    return crud.create_workout(db, workout.title, workout.duration_minutes)
+def create_workout(
+    workout: WorkoutCreate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    return crud.create_workout(db, workout.title, workout.duration_minutes, user_id)
 
 @app.put("/workouts/{workout_id}", response_model=WorkoutResponse)
-def update_workout(workout_id: int, updated: WorkoutCreate, db: Session = Depends(get_db)):
-    updated_workout = crud.update_workout(db, workout_id, updated.title, updated.duration_minutes)
-    if not updated_workout:
+def update_workout(
+    workout_id: int,
+    updated: WorkoutCreate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    workout = crud.update_workout(db, workout_id, updated.title, updated.duration_minutes, user_id)
+    if not workout:
         raise HTTPException(status_code=404, detail="Workout not found")
-    return updated_workout
+    return workout
 
 @app.delete("/workouts/{workout_id}")
-def delete_workout(workout_id: int, db: Session = Depends(get_db)):
-    deleted = crud.delete_workout(db, workout_id)
+def delete_workout(
+    workout_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    deleted = crud.delete_workout(db, workout_id, user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Workout not found")
     return {"message": "Workout deleted successfully"}
