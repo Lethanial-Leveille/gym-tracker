@@ -51,3 +51,28 @@ def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
     db.refresh(new_workout)
 
     return new_workout
+
+@app.put("/workouts/{workout_id}")
+def update_workout(workout_id: int, updated: WorkoutCreate, db: Session = Depends(get_db)):
+    workout = db.query(WorkoutDB).filter(WorkoutDB.id == workout_id).first()
+    if not workout:
+        return {"error": "Workout not found"}
+
+    workout.title = updated.title
+    workout.duration_minutes = updated.duration_minutes
+    db.commit()
+    db.refresh(workout)
+
+    return workout
+
+@app.delete("/workouts/{workout_id}")
+def delete_workout(workout_id: int, db: Session = Depends(get_db)):
+    workout = db.query(WorkoutDB).filter(WorkoutDB.id == workout_id).first()
+
+    if not workout:
+        return {"error": "Workout not found"}
+
+    db.delete(workout)
+    db.commit()
+
+    return {"message": "Workout deleted successfully"}
