@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import Base, engine, SessionLocal
 from app.db_models import Workout as WorkoutDB
+from app import crud
 
 app = FastAPI(title="Gym Tracker")
 
@@ -44,45 +45,23 @@ def root():
 
 @app.get("/workouts", response_model=list[WorkoutResponse])
 def get_workouts(db: Session = Depends(get_db)):
-    return db.query(WorkoutDB).all()
+    return crud.get_workouts(db)
 
 
 @app.post("/workouts", response_model=WorkoutResponse, status_code=201)
 def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
-    new_workout = WorkoutDB(
-        title=workout.title,
-        duration_minutes=workout.duration_minutes
-    )
-
-    db.add(new_workout)
-    db.commit()
-    db.refresh(new_workout)
-
-    return new_workout
+    return crud.create_workout(db, workout.title, workout.duration_minutes)
 
 @app.put("/workouts/{workout_id}", response_model=WorkoutResponse)
 def update_workout(workout_id: int, updated: WorkoutCreate, db: Session = Depends(get_db)):
-    workout = db.query(WorkoutDB).filter(WorkoutDB.id == workout_id).first()
-
-    if not workout:
+    updated_workout = crud.update_workout(db, workout_id, updated.title, updated.duration_minutes)
+    if not updated_workout:
         raise HTTPException(status_code=404, detail="Workout not found")
-
-    workout.title = updated.title
-    workout.duration_minutes = updated.duration_minutes
-
-    db.commit()
-    db.refresh(workout)
-
-    return workout
+    return updated_workout
 
 @app.delete("/workouts/{workout_id}")
 def delete_workout(workout_id: int, db: Session = Depends(get_db)):
-    workout = db.query(WorkoutDB).filter(WorkoutDB.id == workout_id).first()
-
-    if not workout:
+    deleted = crud.delete_workout(db, workout_id)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Workout not found")
-
-    db.delete(workout)
-    db.commit()
-
     return {"message": "Workout deleted successfully"}
