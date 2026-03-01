@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,14 @@ class WorkoutCreate(BaseModel):
     title: str
     duration_minutes: int
 
+class WorkoutResponse(BaseModel):
+    id: int
+    title: str
+    duration_minutes: int
+
+    class Config:
+        from_attributes = True
+
 
 @app.get("/health")
 def health():
@@ -34,12 +42,12 @@ def root():
     return {"message": "Welcome to the Gym Tracker API!"}
 
 
-@app.get("/workouts")
+@app.get("/workouts", response_model=list[WorkoutResponse])
 def get_workouts(db: Session = Depends(get_db)):
     return db.query(WorkoutDB).all()
 
 
-@app.post("/workouts")
+@app.post("/workouts", response_model=WorkoutResponse, status_code=201)
 def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
     new_workout = WorkoutDB(
         title=workout.title,
@@ -52,14 +60,16 @@ def create_workout(workout: WorkoutCreate, db: Session = Depends(get_db)):
 
     return new_workout
 
-@app.put("/workouts/{workout_id}")
+@app.put("/workouts/{workout_id}", response_model=WorkoutResponse)
 def update_workout(workout_id: int, updated: WorkoutCreate, db: Session = Depends(get_db)):
     workout = db.query(WorkoutDB).filter(WorkoutDB.id == workout_id).first()
+
     if not workout:
-        return {"error": "Workout not found"}
+        raise HTTPException(status_code=404, detail="Workout not found")
 
     workout.title = updated.title
     workout.duration_minutes = updated.duration_minutes
+
     db.commit()
     db.refresh(workout)
 
@@ -70,7 +80,7 @@ def delete_workout(workout_id: int, db: Session = Depends(get_db)):
     workout = db.query(WorkoutDB).filter(WorkoutDB.id == workout_id).first()
 
     if not workout:
-        return {"error": "Workout not found"}
+        raise HTTPException(status_code=404, detail="Workout not found")
 
     db.delete(workout)
     db.commit()
