@@ -1,6 +1,8 @@
 from sqlalchemy.orm import Session
-from app.db_models import Workout
+from sqlalchemy import func
+from app.db_models import Workout, Exercise, WorkoutExercise
 
+# ----- Workouts -----
 
 def get_workouts(
     db: Session,
@@ -76,3 +78,77 @@ def delete_workout(db: Session, workout_id: int, user_id: int) -> bool:
     db.delete(workout)
     db.commit()
     return True
+
+# ----- Exercises -----
+
+def create_exercise(db: Session, name: str, primary_muscle: str | None, secondary_muscles: str | None,
+                    classification: str | None, notes: str | None):
+    exercise = Exercise(
+        name=name,
+        primary_muscle=primary_muscle,
+        secondary_muscles=secondary_muscles,
+        classification=classification,
+        notes=notes
+    )
+    db.add(exercise)
+    db.commit()
+    db.refresh(exercise)
+    return exercise
+
+
+def list_exercises(db: Session, skip: int = 0, limit: int = 20, q: str | None = None,
+                   primary_muscle: str | None = None, classification: str | None = None):
+    query = db.query(Exercise)
+
+    if q:
+        query = query.filter(func.lower(Exercise.name).contains(q.lower()))
+    if primary_muscle:
+        query = query.filter(Exercise.primary_muscle == primary_muscle)
+    if classification:
+        query = query.filter(Exercise.classification == classification)
+
+    total = query.count()
+    items = query.order_by(Exercise.name.asc()).offset(skip).limit(limit).all()
+    return total, items
+
+
+def get_exercise(db: Session, exercise_id: int):
+    return db.query(Exercise).filter(Exercise.id == exercise_id).first()
+
+
+# ----- Link exercise into workout -----
+
+def add_exercise_to_workout(db: Session, workout_id: int, user_id: int,
+                            exercise_id: int, sets: int | None, reps: int | None,
+                            weight: int | None, order_index: int, notes: str | None):
+    workout = db.query(Workout).filter(Workout.id == workout_id, Workout.user_id == user_id).first()
+    if not workout:
+        return None
+
+    exercise = get_exercise(db, exercise_id)
+    if not exercise:
+        return "exercise_not_found"
+
+    we = WorkoutExercise(
+        workout_id=workout_id,
+        exercise_id=exercise_id,
+        sets=sets,
+        reps=reps,
+        weight=weight,
+        order_index=order_index,
+        notes=notes
+    )
+    db.add(we)
+    db.commit()
+    db.refresh(we)
+    return we
+
+
+def get_workout_detail(db: Session, workout_id: int, user_id: int):
+    workout = db.query(Workout).filter(Workout.id == workout_id, Workout.user_id == user_id).first()
+    if not workout:
+        return None
+
+    # order the join rows
+    workout.exercises.sort(key=lambda x: x.order_index)
+    return workout
