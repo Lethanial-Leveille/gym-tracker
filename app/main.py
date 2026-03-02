@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,12 @@ class WorkoutResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class WorkoutsListResponse(BaseModel):
+    total: int
+    skip: int
+    limit: int
+    items: list[WorkoutResponse]
+
 
 @app.get("/health")
 def health():
@@ -46,12 +52,25 @@ def root():
     return {"message": "Welcome to the Gym Tracker API!"}
 
 
-@app.get("/workouts", response_model=list[WorkoutResponse])
+@app.get("/workouts", response_model=WorkoutsListResponse)
 def get_workouts(
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    title: str | None = None,
+    min_duration: int | None = Query(None, ge=0),
+    max_duration: int | None = Query(None, ge=0),
 ):
-    return crud.get_workouts(db, user_id)
+    return crud.get_workouts(
+        db=db,
+        user_id=user_id,
+        skip=skip,
+        limit=limit,
+        title=title,
+        min_duration=min_duration,
+        max_duration=max_duration,
+    )
 
 
 @app.post("/workouts", response_model=WorkoutResponse, status_code=201)

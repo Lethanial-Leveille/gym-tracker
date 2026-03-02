@@ -2,8 +2,38 @@ from sqlalchemy.orm import Session
 from app.db_models import Workout
 
 
-def get_workouts(db: Session, user_id: int):
-    return db.query(Workout).filter(Workout.user_id == user_id).all()
+def get_workouts(
+    db: Session,
+    user_id: int,
+    skip: int = 0,
+    limit: int = 10,
+    title: str | None = None,
+    min_duration: int | None = None,
+    max_duration: int | None = None,
+):
+    query = db.query(Workout).filter(Workout.user_id == user_id)
+
+    # filtering
+    if title:
+        query = query.filter(Workout.title.ilike(f"%{title}%"))
+
+    if min_duration is not None:
+        query = query.filter(Workout.duration_minutes >= min_duration)
+
+    if max_duration is not None:
+        query = query.filter(Workout.duration_minutes <= max_duration)
+
+    total = query.count()
+
+    # pagination
+    items = (
+        query.order_by(Workout.id.asc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return {"total": total, "skip": skip, "limit": limit, "items": items}
 
 
 def get_workout(db: Session, workout_id: int, user_id: int):
