@@ -37,6 +37,13 @@ class ExerciseResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class ExerciseStatsResponse(BaseModel):
+    exercise_id: int
+    last_weight: int | None = None
+    best_weight: int | None = None
+
+    class Config:
+        from_attributes = True
 
 # ----- Workout -----
 class WorkoutCreate(BaseModel):

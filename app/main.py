@@ -109,6 +109,18 @@ def list_exercises(
                                       primary_muscle=primary_muscle, classification=classification)
     return {"total": total, "skip": skip, "limit": limit, "items": items}
 
+@app.get("/exercises/{exercise_id}/stats", response_model=schemas.ExerciseStatsResponse)
+def get_exercise_stats(
+    exercise_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    ex = crud.get_exercise(db, exercise_id)
+    if not ex:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+
+    return crud.get_exercise_stats(db=db, exercise_id=exercise_id, user_id=user_id)
+
 
 # ----- Attach exercise to a workout -----
 

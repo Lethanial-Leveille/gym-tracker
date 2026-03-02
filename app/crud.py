@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from app.db_models import Workout, Exercise, WorkoutExercise, SetEntry
 
 # ----- Workouts -----
@@ -222,3 +222,42 @@ def list_set_entries(
         .all()
     )
     return items
+
+def get_exercise_stats(
+    db: Session,
+    exercise_id: int,
+    user_id: int
+):
+    # BEST weight for this exercise for this user (max of weights)
+    best_weight = (
+        db.query(func.max(SetEntry.weight))
+        .join(WorkoutExercise, SetEntry.workout_exercise_id == WorkoutExercise.id)
+        .join(Workout, WorkoutExercise.workout_id == Workout.id)
+        .filter(
+            Workout.user_id == user_id,
+            WorkoutExercise.exercise_id == exercise_id,
+            SetEntry.weight.isnot(None)
+        )
+        .scalar()
+    )
+
+    # LAST weight for this exercise for this user (most recent SetEntry by id)
+    last_weight = (
+        db.query(SetEntry.weight)
+        .join(WorkoutExercise, SetEntry.workout_exercise_id == WorkoutExercise.id)
+        .join(Workout, WorkoutExercise.workout_id == Workout.id)
+        .filter(
+            Workout.user_id == user_id,
+            WorkoutExercise.exercise_id == exercise_id,
+            SetEntry.weight.isnot(None)
+        )
+        .order_by(desc(SetEntry.id))
+        .limit(1)
+        .scalar()
+    )
+
+    return {
+        "exercise_id": exercise_id,
+        "last_weight": last_weight,
+        "best_weight": best_weight
+    }
