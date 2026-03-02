@@ -160,7 +160,6 @@ def get_workout_detail(db: Session, workout_id: int, user_id: int):
 def add_set_entry(
     db: Session,
     workout_exercise_id: int,
-    set_number: int,
     reps: int,
     weight: int | None,
     user_id: int
@@ -178,9 +177,17 @@ def add_set_entry(
     if not we:
         return None
 
+    # auto set_number = max + 1
+    current_max = (
+        db.query(func.coalesce(func.max(SetEntry.set_number), 0))
+        .filter(SetEntry.workout_exercise_id == workout_exercise_id)
+        .scalar()
+    )
+    next_set_number = current_max + 1
+
     entry = SetEntry(
         workout_exercise_id=workout_exercise_id,
-        set_number=set_number,
+        set_number=next_set_number,
         reps=reps,
         weight=weight
     )

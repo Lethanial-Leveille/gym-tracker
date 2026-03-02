@@ -3,7 +3,6 @@ from pydantic import BaseModel
 
 # ----- Sets -----
 class SetEntryCreate(BaseModel):
-    set_number: int
     reps: int
     weight: int | None = None
 

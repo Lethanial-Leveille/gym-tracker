@@ -161,13 +161,12 @@ def create_set_entry(
     user_id: int = Depends(get_current_user_id)
 ):
     entry = crud.add_set_entry(
-        db=db,
-        workout_exercise_id=workout_exercise_id,
-        set_number=payload.set_number,
-        reps=payload.reps,
-        weight=payload.weight,
-        user_id=user_id
-    )
+    db=db,
+    workout_exercise_id=workout_exercise_id,
+    reps=payload.reps,
+    weight=payload.weight,
+    user_id=user_id
+)
     if not entry:
         raise HTTPException(status_code=404, detail="Workout exercise not found")
     return entry
