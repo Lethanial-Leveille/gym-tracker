@@ -1,8 +1,24 @@
 from pydantic import BaseModel
 
 
-# ----- Exercise -----
+# ----- Sets -----
+class SetEntryCreate(BaseModel):
+    set_number: int
+    reps: int
+    weight: int | None = None
 
+
+class SetEntryResponse(BaseModel):
+    id: int
+    set_number: int
+    reps: int
+    weight: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+# ----- Exercise -----
 class ExerciseCreate(BaseModel):
     name: str
     primary_muscle: str | None = None
@@ -24,7 +40,6 @@ class ExerciseResponse(BaseModel):
 
 
 # ----- Workout -----
-
 class WorkoutCreate(BaseModel):
     title: str
     duration_minutes: int
@@ -46,13 +61,9 @@ class WorkoutsListResponse(BaseModel):
     items: list[WorkoutResponse]
 
 
-# ----- WorkoutExercise (adding exercises into workouts) -----
-
+# ----- WorkoutExercise (exercise inside a workout) -----
 class WorkoutExerciseCreate(BaseModel):
     exercise_id: int
-    sets: int | None = None
-    reps: int | None = None
-    weight: int | None = None
     order_index: int = 0
     notes: str | None = None
 
@@ -60,11 +71,9 @@ class WorkoutExerciseCreate(BaseModel):
 class WorkoutExerciseResponse(BaseModel):
     id: int
     order_index: int
-    sets: int | None = None
-    reps: int | None = None
-    weight: int | None = None
     notes: str | None = None
     exercise: ExerciseResponse
+    set_entries: list["SetEntryResponse"]
 
     class Config:
         from_attributes = True
@@ -72,3 +81,6 @@ class WorkoutExerciseResponse(BaseModel):
 
 class WorkoutDetailResponse(WorkoutResponse):
     exercises: list[WorkoutExerciseResponse]
+
+WorkoutExerciseResponse.model_rebuild()
+WorkoutDetailResponse.model_rebuild()

@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.db_models import Workout, Exercise, WorkoutExercise
+from app.db_models import Workout, Exercise, WorkoutExercise, SetEntry
 
 # ----- Workouts -----
 
@@ -118,9 +118,14 @@ def get_exercise(db: Session, exercise_id: int):
 
 # ----- Link exercise into workout -----
 
-def add_exercise_to_workout(db: Session, workout_id: int, user_id: int,
-                            exercise_id: int, sets: int | None, reps: int | None,
-                            weight: int | None, order_index: int, notes: str | None):
+def add_exercise_to_workout(
+    db: Session,
+    workout_id: int,
+    user_id: int,
+    exercise_id: int,
+    order_index: int,
+    notes: str | None
+):
     workout = db.query(Workout).filter(Workout.id == workout_id, Workout.user_id == user_id).first()
     if not workout:
         return None
@@ -132,9 +137,6 @@ def add_exercise_to_workout(db: Session, workout_id: int, user_id: int,
     we = WorkoutExercise(
         workout_id=workout_id,
         exercise_id=exercise_id,
-        sets=sets,
-        reps=reps,
-        weight=weight,
         order_index=order_index,
         notes=notes
     )
@@ -152,3 +154,64 @@ def get_workout_detail(db: Session, workout_id: int, user_id: int):
     # order the join rows
     workout.exercises.sort(key=lambda x: x.order_index)
     return workout
+
+# ----- Sets -----
+
+def add_set_entry(
+    db: Session,
+    workout_exercise_id: int,
+    set_number: int,
+    reps: int,
+    weight: int | None,
+    user_id: int
+):
+    # Make sure the workout_exercise exists and belongs to this user
+    we = (
+        db.query(WorkoutExercise)
+        .join(Workout, WorkoutExercise.workout_id == Workout.id)
+        .filter(
+            WorkoutExercise.id == workout_exercise_id,
+            Workout.user_id == user_id
+        )
+        .first()
+    )
+    if not we:
+        return None
+
+    entry = SetEntry(
+        workout_exercise_id=workout_exercise_id,
+        set_number=set_number,
+        reps=reps,
+        weight=weight
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def list_set_entries(
+    db: Session,
+    workout_exercise_id: int,
+    user_id: int
+):
+    # Same ownership check
+    we = (
+        db.query(WorkoutExercise)
+        .join(Workout, WorkoutExercise.workout_id == Workout.id)
+        .filter(
+            WorkoutExercise.id == workout_exercise_id,
+            Workout.user_id == user_id
+        )
+        .first()
+    )
+    if not we:
+        return None
+
+    items = (
+        db.query(SetEntry)
+        .filter(SetEntry.workout_exercise_id == workout_exercise_id)
+        .order_by(SetEntry.set_number.asc())
+        .all()
+    )
+    return items

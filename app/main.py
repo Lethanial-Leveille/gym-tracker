@@ -124,9 +124,6 @@ def add_exercise_to_workout(
         workout_id=workout_id,
         user_id=user_id,
         exercise_id=payload.exercise_id,
-        sets=payload.sets,
-        reps=payload.reps,
-        weight=payload.weight,
         order_index=payload.order_index,
         notes=payload.notes,
     )
@@ -149,3 +146,47 @@ def get_workout_detail(
     if not workout:
         raise HTTPException(status_code=404, detail="Workout not found")
     return workout
+
+# ----- Sets -----
+
+@app.post(
+    "/workout-exercises/{workout_exercise_id}/sets",
+    response_model=schemas.SetEntryResponse,
+    status_code=201
+)
+def create_set_entry(
+    workout_exercise_id: int,
+    payload: schemas.SetEntryCreate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    entry = crud.add_set_entry(
+        db=db,
+        workout_exercise_id=workout_exercise_id,
+        set_number=payload.set_number,
+        reps=payload.reps,
+        weight=payload.weight,
+        user_id=user_id
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail="Workout exercise not found")
+    return entry
+
+
+@app.get(
+    "/workout-exercises/{workout_exercise_id}/sets",
+    response_model=list[schemas.SetEntryResponse]
+)
+def get_set_entries(
+    workout_exercise_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    items = crud.list_set_entries(
+        db=db,
+        workout_exercise_id=workout_exercise_id,
+        user_id=user_id
+    )
+    if items is None:
+        raise HTTPException(status_code=404, detail="Workout exercise not found")
+    return items
