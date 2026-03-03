@@ -207,13 +207,18 @@ def get_active_session(
 @app.post("/sessions/{session_id}/finish", response_model=schemas.WorkoutSessionResponse)
 def finish_session(
     session_id: int,
-    payload: schemas.FinishWorkoutRequest | None = None,
+    payload: schemas.FinishSessionRequest | None = None,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    override = payload.duration_minutes if payload else None
+    duration_override = payload.duration_minutes if payload else None
 
-    session = crud.finish_workout_session(db, session_id, user_id, override)
+    session = crud.finish_workout_session(
+        db=db,
+        session_id=session_id,
+        user_id=user_id,
+        duration_minutes_override=duration_override,
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
