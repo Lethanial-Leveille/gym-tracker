@@ -14,6 +14,7 @@ from app.deps import get_db, get_current_user_id, require_admin
 def run_migrations():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
+        print("STARTUP: no DATABASE_URL, skipping migrations")
         return
 
     alembic_cfg = Config("alembic.ini")
@@ -21,16 +22,16 @@ def run_migrations():
     command.upgrade(alembic_cfg, "head")
 
 
-def run_seed():
+def run_seed() -> int:
     if not os.getenv("DATABASE_URL"):
-        return
+        print("STARTUP: no DATABASE_URL, skipping seed")
+        return 0
     from app.scripts.seed_exercises import seed_exercises
-    seed_exercises()
+    return seed_exercises()
 
 
 app = FastAPI(title="Gym Tracker")
 app.include_router(auth_router)
-
 
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")]
 
@@ -45,8 +46,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup():
+    print("STARTUP: running migrations + seed")
     run_migrations()
-    run_seed()
+    created = run_seed()
+    print(f"STARTUP: seed done, created={created}")
 
 # ---------- Health ----------
 @app.get("/health")
