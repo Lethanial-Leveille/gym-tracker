@@ -1,7 +1,8 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+if __name__ == "__main__":
+    load_dotenv()
 
 from app.database import SessionLocal
 from app.db_models import Exercise
