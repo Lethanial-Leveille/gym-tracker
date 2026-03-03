@@ -29,24 +29,22 @@ DEFAULT_EXERCISES = [
     {"name": "Calf Raise", "primary_muscle": "calves", "secondary_muscles": None, "classification": "isolation", "notes": None},
 ]
 
-def seed():
+def seed_exercises():
     db = SessionLocal()
     try:
-        existing_names = {row[0] for row in db.query(Exercise.name).all()}
+        created = 0
+        for item in DEFAULT_EXERCISES:
+            exists = db.query(Exercise).filter(Exercise.name == item["name"]).first()
+            if exists:
+                continue
+            db.add(Exercise(**item))
+            created += 1
 
-        new_exercises = []
-        for ex in DEFAULT_EXERCISES:
-            if ex["name"] not in existing_names:
-                new_exercises.append(Exercise(**ex))
-
-        if new_exercises:
-            db.add_all(new_exercises)
-            db.commit()
-            print(f"Seeded {len(new_exercises)} exercises.")
-        else:
-            print("No new exercises to seed.")
+        db.commit()
+        print(f"Seed complete. Created {created} exercises.")
+        return created
     finally:
         db.close()
 
 if __name__ == "__main__":
-    seed()
+    seed_exercises()
