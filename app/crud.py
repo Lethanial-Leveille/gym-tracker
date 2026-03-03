@@ -1,9 +1,56 @@
+from datetime import datetime
+import math
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
-from app.db_models import Workout, Exercise, WorkoutExercise, SetEntry
 
-# ----- Workouts -----
+from app.db_models import (
+    Workout,
+    Exercise,
+    WorkoutExercise,
+    WorkoutSession,
+    SessionExercise,
+    SetEntry,
+)
 
+# =========================
+# Helpers
+# =========================
+def _get_workout_if_owned(db: Session, workout_id: int, user_id: int):
+    return (
+        db.query(Workout)
+        .filter(Workout.id == workout_id, Workout.user_id == user_id)
+        .first()
+    )
+
+
+def _get_session_if_owned(db: Session, session_id: int, user_id: int):
+    return (
+        db.query(WorkoutSession)
+        .filter(WorkoutSession.id == session_id, WorkoutSession.user_id == user_id)
+        .first()
+    )
+
+
+def _get_session_exercise_if_owned(db: Session, session_exercise_id: int, user_id: int):
+    return (
+        db.query(SessionExercise)
+        .join(WorkoutSession, SessionExercise.session_id == WorkoutSession.id)
+        .filter(SessionExercise.id == session_exercise_id, WorkoutSession.user_id == user_id)
+        .first()
+    )
+
+def get_active_session(db: Session, user_id: int):
+    return (
+        db.query(WorkoutSession)
+        .filter(WorkoutSession.user_id == user_id, WorkoutSession.ended_at.is_(None))
+        .order_by(WorkoutSession.started_at.desc())
+        .first()
+    )
+
+# =========================
+# Workouts (plan)
+# =========================
 def get_workouts(
     db: Session,
     user_id: int,
@@ -15,19 +62,14 @@ def get_workouts(
 ):
     query = db.query(Workout).filter(Workout.user_id == user_id)
 
-    # filtering
     if title:
         query = query.filter(Workout.title.ilike(f"%{title}%"))
-
     if min_duration is not None:
         query = query.filter(Workout.duration_minutes >= min_duration)
-
     if max_duration is not None:
         query = query.filter(Workout.duration_minutes <= max_duration)
 
     total = query.count()
-
-    # pagination
     items = (
         query.order_by(Workout.id.asc())
         .offset(skip)
@@ -38,32 +80,30 @@ def get_workouts(
     return {"total": total, "skip": skip, "limit": limit, "items": items}
 
 
-def get_workout(db: Session, workout_id: int, user_id: int):
-    return db.query(Workout).filter(
-        Workout.id == workout_id,
-        Workout.user_id == user_id
-    ).first()
+def get_workout_detail(db: Session, workout_id: int, user_id: int):
+    workout = _get_workout_if_owned(db, workout_id, user_id)
+    if not workout:
+        return None
+
+    workout.exercises.sort(key=lambda x: x.order_index)
+    return workout
 
 
 def create_workout(db: Session, title: str, duration_minutes: int, user_id: int):
-    new_workout = Workout(
-        title=title,
-        duration_minutes=duration_minutes,
-        user_id=user_id
-    )
-    db.add(new_workout)
+    workout = Workout(title=title, duration_minutes=max(0, duration_minutes), user_id=user_id)
+    db.add(workout)
     db.commit()
-    db.refresh(new_workout)
-    return new_workout
+    db.refresh(workout)
+    return workout
 
 
 def update_workout(db: Session, workout_id: int, title: str, duration_minutes: int, user_id: int):
-    workout = get_workout(db, workout_id, user_id)
+    workout = _get_workout_if_owned(db, workout_id, user_id)
     if not workout:
         return None
 
     workout.title = title
-    workout.duration_minutes = duration_minutes
+    workout.duration_minutes = max(0, duration_minutes)
 
     db.commit()
     db.refresh(workout)
@@ -71,7 +111,7 @@ def update_workout(db: Session, workout_id: int, title: str, duration_minutes: i
 
 
 def delete_workout(db: Session, workout_id: int, user_id: int) -> bool:
-    workout = get_workout(db, workout_id, user_id)
+    workout = _get_workout_if_owned(db, workout_id, user_id)
     if not workout:
         return False
 
@@ -79,16 +119,24 @@ def delete_workout(db: Session, workout_id: int, user_id: int) -> bool:
     db.commit()
     return True
 
-# ----- Exercises -----
 
-def create_exercise(db: Session, name: str, primary_muscle: str | None, secondary_muscles: str | None,
-                    classification: str | None, notes: str | None):
+# =========================
+# Exercises (library)
+# =========================
+def create_exercise(
+    db: Session,
+    name: str,
+    primary_muscle: str | None,
+    secondary_muscles: str | None,
+    classification: str | None,
+    notes: str | None,
+):
     exercise = Exercise(
         name=name,
         primary_muscle=primary_muscle,
         secondary_muscles=secondary_muscles,
         classification=classification,
-        notes=notes
+        notes=notes,
     )
     db.add(exercise)
     db.commit()
@@ -96,8 +144,14 @@ def create_exercise(db: Session, name: str, primary_muscle: str | None, secondar
     return exercise
 
 
-def list_exercises(db: Session, skip: int = 0, limit: int = 20, q: str | None = None,
-                   primary_muscle: str | None = None, classification: str | None = None):
+def list_exercises(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    q: str | None = None,
+    primary_muscle: str | None = None,
+    classification: str | None = None,
+):
     query = db.query(Exercise)
 
     if q:
@@ -116,17 +170,52 @@ def get_exercise(db: Session, exercise_id: int):
     return db.query(Exercise).filter(Exercise.id == exercise_id).first()
 
 
-# ----- Link exercise into workout -----
+def get_exercise_stats(db: Session, exercise_id: int, user_id: int):
+    # best weight across all sets for this exercise for this user
+    best_weight = (
+        db.query(func.max(SetEntry.weight))
+        .select_from(SetEntry)
+        .join(SessionExercise, SetEntry.session_exercise_id == SessionExercise.id)
+        .join(WorkoutSession, SessionExercise.session_id == WorkoutSession.id)
+        .filter(
+            WorkoutSession.user_id == user_id,
+            SessionExercise.exercise_id == exercise_id,
+            SetEntry.weight.isnot(None),
+        )
+        .scalar()
+    )
 
+    # last logged weight, approximated by newest session then newest set id
+    last_weight = (
+        db.query(SetEntry.weight)
+        .select_from(SetEntry)
+        .join(SessionExercise, SetEntry.session_exercise_id == SessionExercise.id)
+        .join(WorkoutSession, SessionExercise.session_id == WorkoutSession.id)
+        .filter(
+            WorkoutSession.user_id == user_id,
+            SessionExercise.exercise_id == exercise_id,
+            SetEntry.weight.isnot(None),
+        )
+        .order_by(desc(WorkoutSession.started_at), desc(SetEntry.id))
+        .limit(1)
+        .scalar()
+    )
+
+    return {"exercise_id": exercise_id, "last_weight": last_weight, "best_weight": best_weight}
+
+
+# =========================
+# WorkoutExercises (plan items)
+# =========================
 def add_exercise_to_workout(
     db: Session,
     workout_id: int,
     user_id: int,
     exercise_id: int,
     order_index: int,
-    notes: str | None
+    notes: str | None,
 ):
-    workout = db.query(Workout).filter(Workout.id == workout_id, Workout.user_id == user_id).first()
+    workout = _get_workout_if_owned(db, workout_id, user_id)
     if not workout:
         return None
 
@@ -138,7 +227,7 @@ def add_exercise_to_workout(
         workout_id=workout_id,
         exercise_id=exercise_id,
         order_index=order_index,
-        notes=notes
+        notes=notes,
     )
     db.add(we)
     db.commit()
@@ -146,50 +235,102 @@ def add_exercise_to_workout(
     return we
 
 
-def get_workout_detail(db: Session, workout_id: int, user_id: int):
-    workout = db.query(Workout).filter(Workout.id == workout_id, Workout.user_id == user_id).first()
+# =========================
+# Sessions
+# =========================
+def start_workout_session(db: Session, workout_id: int, user_id: int):
+    workout = get_workout(db, workout_id, user_id)
     if not workout:
         return None
 
-    # order the join rows
-    workout.exercises.sort(key=lambda x: x.order_index)
-    return workout
+    # Enforce: only one active session per user
+    active = get_active_session(db, user_id)
+    if active:
+        return "active_session_exists"
 
-# ----- Sets -----
-
-def add_set_entry(
-    db: Session,
-    workout_exercise_id: int,
-    reps: int,
-    weight: int | None,
-    user_id: int
-):
-    # Make sure the workout_exercise exists and belongs to this user
-    we = (
-        db.query(WorkoutExercise)
-        .join(Workout, WorkoutExercise.workout_id == Workout.id)
-        .filter(
-            WorkoutExercise.id == workout_exercise_id,
-            Workout.user_id == user_id
-        )
-        .first()
+    session = WorkoutSession(
+        user_id=user_id,
+        workout_id=workout_id,
+        started_at=datetime.utcnow(),
+        ended_at=None,
     )
-    if not we:
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    # Clone template exercises into session exercises
+    plan_items = sorted(workout.exercises, key=lambda x: x.order_index)
+    for we in plan_items:
+        se = SessionExercise(
+            session_id=session.id,
+            exercise_id=we.exercise_id,
+            order_index=we.order_index,
+            notes=we.notes,
+            planned_reps=None,
+            planned_weight=None,
+        )
+        db.add(se)
+
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def finish_workout_session(db: Session, session_id: int, user_id: int, duration_minutes_override: int | None = None):
+    session = _get_session_if_owned(db, session_id, user_id)
+    if not session:
         return None
 
-    # auto set_number = max + 1
+    if session.ended_at is None:
+        session.ended_at = datetime.utcnow()
+
+    if duration_minutes_override is not None:
+        duration = max(0, duration_minutes_override)
+    else:
+        seconds = (session.ended_at - session.started_at).total_seconds()
+        duration = max(0, int(math.ceil(seconds / 60)))
+
+    session.duration_minutes = duration
+
+    # optional: store "last duration" on the plan
+    workout = db.query(Workout).filter(Workout.id == session.workout_id).first()
+    if workout:
+        workout.duration_minutes = duration
+
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def get_workout_session_detail(db: Session, session_id: int, user_id: int):
+    session = _get_session_if_owned(db, session_id, user_id)
+    if not session:
+        return None
+
+    session.session_exercises.sort(key=lambda x: x.order_index)
+    return session
+
+
+# =========================
+# Sets (session-based)
+# =========================
+def add_set_entry(db: Session, session_exercise_id: int, reps: int, weight: int | None, user_id: int):
+    se = _get_session_exercise_if_owned(db, session_exercise_id, user_id)
+    if not se:
+        return None
+
     current_max = (
         db.query(func.coalesce(func.max(SetEntry.set_number), 0))
-        .filter(SetEntry.workout_exercise_id == workout_exercise_id)
+        .filter(SetEntry.session_exercise_id == session_exercise_id)
         .scalar()
     )
-    next_set_number = current_max + 1
+    next_set_number = int(current_max) + 1
 
     entry = SetEntry(
-        workout_exercise_id=workout_exercise_id,
+        session_exercise_id=session_exercise_id,
         set_number=next_set_number,
         reps=reps,
-        weight=weight
+        weight=weight,
     )
     db.add(entry)
     db.commit()
@@ -197,67 +338,65 @@ def add_set_entry(
     return entry
 
 
-def list_set_entries(
-    db: Session,
-    workout_exercise_id: int,
-    user_id: int
-):
-    # Same ownership check
-    we = (
-        db.query(WorkoutExercise)
-        .join(Workout, WorkoutExercise.workout_id == Workout.id)
-        .filter(
-            WorkoutExercise.id == workout_exercise_id,
-            Workout.user_id == user_id
-        )
-        .first()
-    )
-    if not we:
+def list_set_entries(db: Session, session_exercise_id: int, user_id: int):
+    se = _get_session_exercise_if_owned(db, session_exercise_id, user_id)
+    if not se:
         return None
 
-    items = (
+    return (
         db.query(SetEntry)
-        .filter(SetEntry.workout_exercise_id == workout_exercise_id)
+        .filter(SetEntry.session_exercise_id == session_exercise_id)
         .order_by(SetEntry.set_number.asc())
         .all()
     )
-    return items
 
-def get_exercise_stats(
-    db: Session,
-    exercise_id: int,
-    user_id: int
-):
-    # BEST weight for this exercise for this user (max of weights)
-    best_weight = (
-        db.query(func.max(SetEntry.weight))
-        .join(WorkoutExercise, SetEntry.workout_exercise_id == WorkoutExercise.id)
-        .join(Workout, WorkoutExercise.workout_id == Workout.id)
-        .filter(
-            Workout.user_id == user_id,
-            WorkoutExercise.exercise_id == exercise_id,
-            SetEntry.weight.isnot(None)
-        )
-        .scalar()
+
+def update_set_entry(db: Session, session_exercise_id: int, set_entry_id: int, user_id: int, reps: int | None = None, weight: int | None = None):
+    se = _get_session_exercise_if_owned(db, session_exercise_id, user_id)
+    if not se:
+        return None
+
+    entry = (
+        db.query(SetEntry)
+        .filter(SetEntry.id == set_entry_id, SetEntry.session_exercise_id == session_exercise_id)
+        .first()
     )
+    if not entry:
+        return "set_not_found"
 
-    # LAST weight for this exercise for this user (most recent SetEntry by id)
-    last_weight = (
-        db.query(SetEntry.weight)
-        .join(WorkoutExercise, SetEntry.workout_exercise_id == WorkoutExercise.id)
-        .join(Workout, WorkoutExercise.workout_id == Workout.id)
-        .filter(
-            Workout.user_id == user_id,
-            WorkoutExercise.exercise_id == exercise_id,
-            SetEntry.weight.isnot(None)
-        )
-        .order_by(desc(SetEntry.id))
-        .limit(1)
-        .scalar()
+    if reps is not None:
+        entry.reps = reps
+    if weight is not None:
+        entry.weight = weight
+
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def delete_set_entry(db: Session, session_exercise_id: int, set_entry_id: int, user_id: int) -> bool | None:
+    se = _get_session_exercise_if_owned(db, session_exercise_id, user_id)
+    if not se:
+        return None
+
+    entry = (
+        db.query(SetEntry)
+        .filter(SetEntry.id == set_entry_id, SetEntry.session_exercise_id == session_exercise_id)
+        .first()
     )
+    if not entry:
+        return False
 
-    return {
-        "exercise_id": exercise_id,
-        "last_weight": last_weight,
-        "best_weight": best_weight
-    }
+    db.delete(entry)
+    db.commit()
+    return True
+
+
+def clear_set_entries(db: Session, session_exercise_id: int, user_id: int) -> bool | None:
+    se = _get_session_exercise_if_owned(db, session_exercise_id, user_id)
+    if not se:
+        return None
+
+    db.query(SetEntry).filter(SetEntry.session_exercise_id == session_exercise_id).delete()
+    db.commit()
+    return True

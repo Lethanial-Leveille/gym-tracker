@@ -6,10 +6,10 @@ from app import crud, schemas
 
 app = FastAPI(title="Gym Tracker")
 
-# Create tables if they don't exist
 Base.metadata.create_all(bind=engine)
 
 
+# ---------- Dependencies ----------
 def get_db():
     db = SessionLocal()
     try:
@@ -17,10 +17,12 @@ def get_db():
     finally:
         db.close()
 
+
 def get_current_user_id():
-    return 1  # Placeholder for user authentication logic
+    return 1
 
 
+# ---------- Health ----------
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -30,10 +32,21 @@ def health():
 def root():
     return {"message": "Welcome to the Gym Tracker API!"}
 
-# ----- Workout Functions -----
+
+# =========================
+# Workouts (plan)
+# =========================
+@app.post("/workouts", response_model=schemas.WorkoutResponse, status_code=201)
+def create_workout(
+    workout: schemas.WorkoutCreate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return crud.create_workout(db, workout.title, workout.duration_minutes, user_id)
+
 
 @app.get("/workouts", response_model=schemas.WorkoutsListResponse)
-def get_workouts(
+def list_workouts(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
     skip: int = Query(0, ge=0),
@@ -53,13 +66,16 @@ def get_workouts(
     )
 
 
-@app.post("/workouts", response_model=schemas.WorkoutResponse, status_code=201)
-def create_workout(
-    workout: schemas.WorkoutCreate,
+@app.get("/workouts/{workout_id}", response_model=schemas.WorkoutDetailResponse)
+def get_workout_detail(
+    workout_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
-    return crud.create_workout(db, workout.title, workout.duration_minutes, user_id)
+    workout = crud.get_workout_detail(db, workout_id, user_id)
+    if not workout:
+        raise HTTPException(status_code=404, detail="Workout not found")
+    return workout
 
 
 @app.put("/workouts/{workout_id}", response_model=schemas.WorkoutResponse)
@@ -67,18 +83,19 @@ def update_workout(
     workout_id: int,
     updated: schemas.WorkoutCreate,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
     workout = crud.update_workout(db, workout_id, updated.title, updated.duration_minutes, user_id)
     if not workout:
         raise HTTPException(status_code=404, detail="Workout not found")
     return workout
 
+
 @app.delete("/workouts/{workout_id}")
 def delete_workout(
     workout_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
     deleted = crud.delete_workout(db, workout_id, user_id)
     if not deleted:
@@ -86,8 +103,9 @@ def delete_workout(
     return {"message": "Workout deleted successfully"}
 
 
-# ----- Exercises Library -----
-
+# =========================
+# Exercises (library)
+# =========================
 @app.post("/exercises", response_model=schemas.ExerciseResponse, status_code=201)
 def create_exercise(
     ex: schemas.ExerciseCreate,
@@ -105,15 +123,22 @@ def list_exercises(
     primary_muscle: str | None = None,
     classification: str | None = None,
 ):
-    total, items = crud.list_exercises(db, skip=skip, limit=limit, q=q,
-                                      primary_muscle=primary_muscle, classification=classification)
+    total, items = crud.list_exercises(
+        db=db,
+        skip=skip,
+        limit=limit,
+        q=q,
+        primary_muscle=primary_muscle,
+        classification=classification,
+    )
     return {"total": total, "skip": skip, "limit": limit, "items": items}
+
 
 @app.get("/exercises/{exercise_id}/stats", response_model=schemas.ExerciseStatsResponse)
 def get_exercise_stats(
     exercise_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
     ex = crud.get_exercise(db, exercise_id)
     if not ex:
@@ -122,14 +147,15 @@ def get_exercise_stats(
     return crud.get_exercise_stats(db=db, exercise_id=exercise_id, user_id=user_id)
 
 
-# ----- Attach exercise to a workout -----
-
+# =========================
+# Attach exercise to workout plan
+# =========================
 @app.post("/workouts/{workout_id}/exercises", response_model=schemas.WorkoutExerciseResponse, status_code=201)
 def add_exercise_to_workout(
     workout_id: int,
     payload: schemas.WorkoutExerciseCreate,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
     result = crud.add_exercise_to_workout(
         db=db,
@@ -148,56 +174,147 @@ def add_exercise_to_workout(
     return result
 
 
-@app.get("/workouts/{workout_id}", response_model=schemas.WorkoutDetailResponse)
-def get_workout_detail(
+# =========================
+# Sessions
+# =========================
+@app.post("/workouts/{workout_id}/start", response_model=schemas.WorkoutSessionResponse)
+def start_workout(
     workout_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
-    workout = crud.get_workout_detail(db, workout_id, user_id)
-    if not workout:
+    result = crud.start_workout_session(db, workout_id, user_id)
+
+    if result is None:
         raise HTTPException(status_code=404, detail="Workout not found")
-    return workout
 
-# ----- Sets -----
+    if result == "active_session_exists":
+        active = crud.get_active_session(db, user_id)
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "You already have an active session", "active_session_id": active.id}
+        )
 
-@app.post(
-    "/workout-exercises/{workout_exercise_id}/sets",
-    response_model=schemas.SetEntryResponse,
-    status_code=201
-)
+    return result
+
+@app.get("/sessions/active", response_model=schemas.WorkoutSessionResponse | None)
+def get_active_session(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return crud.get_active_session(db, user_id)
+
+@app.post("/sessions/{session_id}/finish", response_model=schemas.WorkoutSessionResponse)
+def finish_session(
+    session_id: int,
+    payload: schemas.FinishWorkoutRequest | None = None,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    override = payload.duration_minutes if payload else None
+
+    session = crud.finish_workout_session(db, session_id, user_id, override)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@app.get("/sessions/{session_id}", response_model=schemas.WorkoutSessionDetailResponse)
+def get_session_detail(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    session = crud.get_workout_session_detail(db, session_id, user_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+# =========================
+# Sets (session exercise)
+# =========================
+@app.post("/session-exercises/{session_exercise_id}/sets", response_model=schemas.SetEntryResponse, status_code=201)
 def create_set_entry(
-    workout_exercise_id: int,
+    session_exercise_id: int,
     payload: schemas.SetEntryCreate,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
     entry = crud.add_set_entry(
-    db=db,
-    workout_exercise_id=workout_exercise_id,
-    reps=payload.reps,
-    weight=payload.weight,
-    user_id=user_id
-)
+        db=db,
+        session_exercise_id=session_exercise_id,
+        reps=payload.reps,
+        weight=payload.weight,
+        user_id=user_id,
+    )
     if not entry:
-        raise HTTPException(status_code=404, detail="Workout exercise not found")
+        raise HTTPException(status_code=404, detail="Session exercise not found")
     return entry
 
 
-@app.get(
-    "/workout-exercises/{workout_exercise_id}/sets",
-    response_model=list[schemas.SetEntryResponse]
-)
-def get_set_entries(
-    workout_exercise_id: int,
+@app.get("/session-exercises/{session_exercise_id}/sets", response_model=list[schemas.SetEntryResponse])
+def list_sets(
+    session_exercise_id: int,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
-    items = crud.list_set_entries(
-        db=db,
-        workout_exercise_id=workout_exercise_id,
-        user_id=user_id
-    )
+    items = crud.list_set_entries(db=db, session_exercise_id=session_exercise_id, user_id=user_id)
     if items is None:
-        raise HTTPException(status_code=404, detail="Workout exercise not found")
+        raise HTTPException(status_code=404, detail="Session exercise not found")
     return items
+
+
+@app.patch("/session-exercises/{session_exercise_id}/sets/{set_entry_id}", response_model=schemas.SetEntryResponse)
+def patch_set_entry(
+    session_exercise_id: int,
+    set_entry_id: int,
+    payload: schemas.SetEntryUpdate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    updated = crud.update_set_entry(
+        db=db,
+        session_exercise_id=session_exercise_id,
+        set_entry_id=set_entry_id,
+        user_id=user_id,
+        reps=payload.reps,
+        weight=payload.weight,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    if updated == "set_not_found":
+        raise HTTPException(status_code=404, detail="Set entry not found")
+    return updated
+
+
+@app.delete("/session-exercises/{session_exercise_id}/sets/{set_entry_id}")
+def delete_set_entry(
+    session_exercise_id: int,
+    set_entry_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    deleted = crud.delete_set_entry(
+        db=db,
+        session_exercise_id=session_exercise_id,
+        set_entry_id=set_entry_id,
+        user_id=user_id,
+    )
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    if deleted is False:
+        raise HTTPException(status_code=404, detail="Set entry not found")
+    return {"message": "Set entry deleted"}
+
+
+@app.delete("/session-exercises/{session_exercise_id}/sets")
+def clear_sets(
+    session_exercise_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    ok = crud.clear_set_entries(db=db, session_exercise_id=session_exercise_id, user_id=user_id)
+    if ok is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    return {"message": "All sets cleared"}

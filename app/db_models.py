@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, DateTime
 from sqlalchemy.orm import relationship
+
 from app.database import Base
 
 
@@ -8,13 +10,14 @@ class Workout(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    duration_minutes = Column(Integer, nullable=False)
+    # Store "last duration" or a default, sessions are the real source of truth
+    duration_minutes = Column(Integer, nullable=False, default=0)
     user_id = Column(Integer, nullable=False, index=True)
 
     exercises = relationship(
         "WorkoutExercise",
         back_populates="workout",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
 
@@ -32,11 +35,14 @@ class Exercise(Base):
     workouts = relationship(
         "WorkoutExercise",
         back_populates="exercise",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
 
 class WorkoutExercise(Base):
+    """
+    Links an Exercise into a Workout plan (template).
+    """
     __tablename__ = "workout_exercises"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -50,10 +56,57 @@ class WorkoutExercise(Base):
     workout = relationship("Workout", back_populates="exercises")
     exercise = relationship("Exercise", back_populates="workouts")
 
+
+class WorkoutSession(Base):
+    """
+    A real workout run. Created when user presses Start.
+    """
+    __tablename__ = "workout_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(Integer, nullable=False, index=True)
+    workout_id = Column(Integer, ForeignKey("workouts.id"), nullable=False, index=True)
+
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    ended_at = Column(DateTime, nullable=True)
+
+    # Store computed minutes for convenience
+    duration_minutes = Column(Integer, nullable=True)
+
+    workout = relationship("Workout")
+    session_exercises = relationship(
+        "SessionExercise",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+
+class SessionExercise(Base):
+    """
+    Snapshot of exercises for a particular session.
+    This is cloned from WorkoutExercise at Start.
+    """
+    __tablename__ = "session_exercises"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    session_id = Column(Integer, ForeignKey("workout_sessions.id"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False, index=True)
+
+    order_index = Column(Integer, nullable=False, default=0, index=True)
+    notes = Column(Text, nullable=True)
+
+    planned_reps = Column(Integer, nullable=True)
+    planned_weight = Column(Integer, nullable=True)
+
+    session = relationship("WorkoutSession", back_populates="session_exercises")
+    exercise = relationship("Exercise")
+
     set_entries = relationship(
         "SetEntry",
-        back_populates="workout_exercise",
-        cascade="all, delete-orphan"
+        back_populates="session_exercise",
+        cascade="all, delete-orphan",
     )
 
 
@@ -62,15 +115,15 @@ class SetEntry(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    workout_exercise_id = Column(
+    session_exercise_id = Column(
         Integer,
-        ForeignKey("workout_exercises.id"),
+        ForeignKey("session_exercises.id"),
         nullable=False,
-        index=True
+        index=True,
     )
 
     set_number = Column(Integer, nullable=False)
     reps = Column(Integer, nullable=False)
     weight = Column(Integer, nullable=True)
 
-    workout_exercise = relationship("WorkoutExercise", back_populates="set_entries")
+    session_exercise = relationship("SessionExercise", back_populates="set_entries")
