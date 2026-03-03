@@ -242,7 +242,7 @@ def add_exercise_to_workout(
 # Sessions
 # =========================
 def start_workout_session(db: Session, workout_id: int, user_id: int):
-    workout = get_workout(db, workout_id, user_id)
+    workout = _get_workout_if_owned(db, workout_id, user_id)
     if not workout:
         return None
 

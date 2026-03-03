@@ -1,45 +1,24 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, Header
+from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.auth import create_access_token, decode_access_token
-from app.db_models import User
-from app.database import Base, engine, SessionLocal
+from app.auth import create_access_token
 from app import crud, schemas
+from app.deps import get_db, get_current_user_id
+from app.routers import auth as auth_router
+
 
 app = FastAPI(title="Gym Tracker")
+app.include_router(auth_router.router)
 
-
-# ---------- Dependencies ----------
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def get_current_user(
-    db: Session = Depends(get_db),
-    authorization: str | None = Header(default=None),
-) -> User:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-
-    token = authorization.split(" ", 1)[1]
-    email = decode_access_token(token)
-    if not email:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = crud.get_user_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    return user
-
-
-def get_current_user_id(user: User = Depends(get_current_user)) -> int:
-    return user.id
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------- Health ----------
 @app.get("/health")
@@ -51,24 +30,6 @@ def health():
 def root():
     return {"message": "Welcome to the Gym Tracker API!"}
 
-
-
-@app.post("/auth/register", response_model=schemas.UserResponse, status_code=201)
-def register(payload: schemas.UserCreate, db: Session = Depends(get_db)):
-    existing = crud.get_user_by_email(db, payload.email)
-    if existing:
-        raise HTTPException(status_code=409, detail="Email already registered")
-    return crud.create_user(db, payload.email, payload.password)
-
-
-@app.post("/auth/login", response_model=schemas.TokenResponse)
-def login(payload: schemas.UserCreate, db: Session = Depends(get_db)):
-    user = crud.authenticate_user(db, payload.email, payload.password)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    token = create_access_token(subject=user.email)
-    return {"access_token": token, "token_type": "bearer"}
 
 # =========================
 # Workouts (plan)
@@ -234,12 +195,14 @@ def start_workout(
 
     return result
 
+
 @app.get("/sessions/active", response_model=schemas.WorkoutSessionResponse | None)
 def get_active_session(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
     return crud.get_active_session(db, user_id)
+
 
 @app.post("/sessions/{session_id}/finish", response_model=schemas.WorkoutSessionResponse)
 def finish_session(
@@ -260,6 +223,7 @@ def finish_session(
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
+
 @app.post("/sessions/active/finish", response_model=schemas.WorkoutSessionResponse)
 def finish_active_session(
     payload: schemas.FinishSessionRequest | None = None,
@@ -272,11 +236,11 @@ def finish_active_session(
 
     duration_override = payload.duration_minutes if payload else None
     finished = crud.finish_workout_session(
-    db=db,
-    session_id=active.id,
-    user_id=user_id,
-    duration_minutes_override=duration_override,
-)
+        db=db,
+        session_id=active.id,
+        user_id=user_id,
+        duration_minutes_override=duration_override,
+    )
     return finished
 
 
