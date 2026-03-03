@@ -1,6 +1,8 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, ForeignKey, Text, DateTime, Boolean
 from sqlalchemy.orm import relationship
+from sqlalchemy import text
+
 
 from app.database import Base
 
@@ -12,6 +14,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    is_admin = Column(Boolean, nullable=False, server_default=text("false"))
 
 class Workout(Base):
     __tablename__ = "workouts"

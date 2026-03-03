@@ -2,5 +2,6 @@
 __pycache__/
 *.pyc
 gym_tracker.db
+.env
 
 
