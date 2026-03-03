@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 
 # =========================
@@ -126,6 +126,10 @@ class FinishWorkoutRequest(BaseModel):
     duration_minutes: int | None = None
 
 
+class FinishSessionRequest(BaseModel):
+    duration_minutes: int | None = None
+
+
 class SessionExerciseResponse(BaseModel):
     id: int
     order_index: int
@@ -148,6 +152,21 @@ class WorkoutSessionDetailResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+
+    class Config:
+        from_attributes = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 # rebuild forward refs
 WorkoutExerciseResponse.model_rebuild()

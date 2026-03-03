@@ -1,12 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 
+from app.auth import create_access_token, decode_access_token
+from app.db_models import User
 from app.database import Base, engine, SessionLocal
 from app import crud, schemas
 
 app = FastAPI(title="Gym Tracker")
-
-Base.metadata.create_all(bind=engine)
 
 
 # ---------- Dependencies ----------
@@ -18,8 +18,27 @@ def get_db():
         db.close()
 
 
-def get_current_user_id():
-    return 1
+def get_current_user(
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+) -> User:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = authorization.split(" ", 1)[1]
+    email = decode_access_token(token)
+    if not email:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = crud.get_user_by_email(db, email)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    return user
+
+
+def get_current_user_id(user: User = Depends(get_current_user)) -> int:
+    return user.id
 
 
 # ---------- Health ----------
@@ -32,6 +51,24 @@ def health():
 def root():
     return {"message": "Welcome to the Gym Tracker API!"}
 
+
+
+@app.post("/auth/register", response_model=schemas.UserResponse, status_code=201)
+def register(payload: schemas.UserCreate, db: Session = Depends(get_db)):
+    existing = crud.get_user_by_email(db, payload.email)
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    return crud.create_user(db, payload.email, payload.password)
+
+
+@app.post("/auth/login", response_model=schemas.TokenResponse)
+def login(payload: schemas.UserCreate, db: Session = Depends(get_db)):
+    user = crud.authenticate_user(db, payload.email, payload.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(subject=user.email)
+    return {"access_token": token, "token_type": "bearer"}
 
 # =========================
 # Workouts (plan)
@@ -222,6 +259,25 @@ def finish_session(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+@app.post("/sessions/active/finish", response_model=schemas.WorkoutSessionResponse)
+def finish_active_session(
+    payload: schemas.FinishSessionRequest | None = None,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    active = crud.get_active_session(db, user_id)
+    if not active:
+        raise HTTPException(status_code=404, detail="No active session")
+
+    duration_override = payload.duration_minutes if payload else None
+    finished = crud.finish_workout_session(
+    db=db,
+    session_id=active.id,
+    user_id=user_id,
+    duration_minutes_override=duration_override,
+)
+    return finished
 
 
 @app.get("/sessions/{session_id}", response_model=schemas.WorkoutSessionDetailResponse)
