@@ -172,6 +172,35 @@ def list_exercises(
 def get_exercise(db: Session, exercise_id: int):
     return db.query(Exercise).filter(Exercise.id == exercise_id).first()
 
+def update_exercise(
+    db: Session,
+    exercise_id: int,
+    updates: dict,
+):
+    ex = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+    if not ex:
+        return None
+
+    # Only update keys that exist on the model
+    allowed = {"name", "primary_muscle", "secondary_muscles", "classification", "notes"}
+    for key, value in updates.items():
+        if key in allowed:
+            setattr(ex, key, value)
+
+    db.commit()
+    db.refresh(ex)
+    return ex
+
+
+def delete_exercise(db: Session, exercise_id: int) -> bool:
+    ex = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+    if not ex:
+        return False
+
+    db.delete(ex)
+    db.commit()
+    return True
+
 
 def get_exercise_stats(db: Session, exercise_id: int, user_id: int):
     # best weight across all sets for this exercise for this user

@@ -5,12 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.auth import create_access_token
 from app import crud, schemas
-from app.deps import get_db, get_current_user_id
-from app.routers import auth as auth_router
+from app.deps import get_db, get_current_user_id, get_current_user
+from app.routers.auth import router as auth_router
+from app.deps import require_admin
 
 
 app = FastAPI(title="Gym Tracker")
-app.include_router(auth_router.router)
+app.include_router(auth_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -104,12 +105,21 @@ def delete_workout(
 # =========================
 # Exercises (library)
 # =========================
+
 @app.post("/exercises", response_model=schemas.ExerciseResponse, status_code=201)
 def create_exercise(
     ex: schemas.ExerciseCreate,
     db: Session = Depends(get_db),
+    admin=Depends(require_admin),
 ):
-    return crud.create_exercise(db, ex.name, ex.primary_muscle, ex.secondary_muscles, ex.classification, ex.notes)
+    return crud.create_exercise(
+        db,
+        ex.name,
+        ex.primary_muscle,
+        ex.secondary_muscles,
+        ex.classification,
+        ex.notes,
+    )
 
 
 @app.get("/exercises")
@@ -144,6 +154,33 @@ def get_exercise_stats(
 
     return crud.get_exercise_stats(db=db, exercise_id=exercise_id, user_id=user_id)
 
+@app.patch("/exercises/{exercise_id}", response_model=schemas.ExerciseResponse)
+def patch_exercise(
+    exercise_id: int,
+    payload: schemas.ExerciseUpdate,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided")
+
+    ex = crud.update_exercise(db=db, exercise_id=exercise_id, updates=updates)
+    if not ex:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    return ex
+
+
+@app.delete("/exercises/{exercise_id}")
+def remove_exercise(
+    exercise_id: int,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    ok = crud.delete_exercise(db=db, exercise_id=exercise_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    return {"message": "Exercise deleted"}
 
 # =========================
 # Attach exercise to workout plan

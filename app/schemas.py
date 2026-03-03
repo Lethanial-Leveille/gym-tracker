@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional
 
 
 # =========================
@@ -34,6 +35,13 @@ class ExerciseCreate(BaseModel):
     secondary_muscles: str | None = None
     classification: str | None = None
     notes: str | None = None
+
+class ExerciseUpdate(BaseModel):
+    name: Optional[str] = None
+    primary_muscle: Optional[str] = None
+    secondary_muscles: Optional[str] = None
+    classification: Optional[str] = None
+    notes: Optional[str] = None
 
 
 class ExerciseResponse(BaseModel):
@@ -160,9 +168,9 @@ class UserCreate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: str
+    is_admin: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TokenResponse(BaseModel):
     access_token: str
