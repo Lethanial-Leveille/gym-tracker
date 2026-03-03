@@ -1,42 +1,38 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException, Query
-from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from alembic import command
 from alembic.config import Config
 
-from app.auth import create_access_token
 from app import crud, schemas
-from app.deps import get_db, get_current_user_id, get_current_user
 from app.routers.auth import router as auth_router
-from app.deps import require_admin
+from app.deps import get_db, get_current_user_id, require_admin
+
 
 def run_migrations():
-    if not os.getenv("DATABASE_URL"):
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
         return
 
     alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+    alembic_cfg.set_main_option("sqlalchemy.url", database_url)
     command.upgrade(alembic_cfg, "head")
 
 
 def run_seed():
     if not os.getenv("DATABASE_URL"):
         return
-
     from app.scripts.seed_exercises import seed_exercises
     seed_exercises()
 
 
-run_migrations()
-run_seed()
-
 app = FastAPI(title="Gym Tracker")
 app.include_router(auth_router)
 
-origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+
+origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")]
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,6 +41,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def startup():
+    run_migrations()
+    run_seed()
 
 # ---------- Health ----------
 @app.get("/health")
