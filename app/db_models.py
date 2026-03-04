@@ -77,12 +77,16 @@ class WorkoutSession(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     user_id = Column(Integer, nullable=False, index=True)
-    workout_id = Column(Integer, ForeignKey("workouts.id"), nullable=False, index=True)
+
+    # templates not required anymore
+    workout_id = Column(Integer, ForeignKey("workouts.id"), nullable=True, index=True)
+
+    # session title chosen at start, can be changed later
+    title = Column(String, nullable=False, default="Workout")
 
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
 
-    # Store computed minutes for convenience
     duration_minutes = Column(Integer, nullable=True)
 
     workout = relationship("Workout")

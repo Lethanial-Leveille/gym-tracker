@@ -322,6 +322,58 @@ def get_session_detail(
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
+@app.post("/sessions/start", response_model=schemas.WorkoutSessionResponse, status_code=201)
+def start_blank_session(
+    payload: schemas.StartSessionRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    result = crud.start_blank_session(db=db, user_id=user_id, title=payload.title)
+
+    if result == "active_session_exists":
+        active = crud.get_active_session(db, user_id)
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "You already have an active session", "active_session_id": active.id}
+        )
+
+    return result
+
+
+@app.patch("/sessions/{session_id}/title", response_model=schemas.WorkoutSessionResponse)
+def patch_session_title(
+    session_id: int,
+    payload: schemas.UpdateSessionTitleRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    updated = crud.update_session_title(db=db, session_id=session_id, user_id=user_id, title=payload.title)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return updated
+
+
+@app.post("/sessions/{session_id}/exercises", response_model=schemas.SessionExerciseResponse, status_code=201)
+def add_exercise_to_session(
+    session_id: int,
+    payload: schemas.AddSessionExerciseRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    result = crud.add_exercise_to_session(
+        db=db,
+        session_id=session_id,
+        user_id=user_id,
+        exercise_id=payload.exercise_id,
+        order_index=payload.order_index,
+        notes=payload.notes,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if result == "exercise_not_found":
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    return result
+
 
 # =========================
 # Sets (session exercise)

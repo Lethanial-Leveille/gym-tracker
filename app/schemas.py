@@ -121,7 +121,8 @@ class WorkoutDetailResponse(WorkoutResponse):
 # =========================
 class WorkoutSessionResponse(BaseModel):
     id: int
-    workout_id: int
+    title: str
+    workout_id: int | None = None
     started_at: datetime
     ended_at: datetime | None = None
     duration_minutes: int | None = None
@@ -148,10 +149,21 @@ class SessionExerciseResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class StartSessionRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=60)
+
+class UpdateSessionTitleRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=60)
+
+class AddSessionExerciseRequest(BaseModel):
+    exercise_id: int
+    order_index: int | None = None
+    notes: str | None = None
 
 class WorkoutSessionDetailResponse(BaseModel):
     id: int
-    workout_id: int
+    title: str
+    workout_id: int | None = None
     started_at: datetime
     ended_at: datetime | None = None
     duration_minutes: int | None = None
@@ -159,7 +171,6 @@ class WorkoutSessionDetailResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
 
 class UserCreate(BaseModel):
     email: EmailStr

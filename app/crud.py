@@ -342,6 +342,65 @@ def get_workout_session_detail(db: Session, session_id: int, user_id: int):
     session.session_exercises.sort(key=lambda x: x.order_index)
     return session
 
+def start_blank_session(db: Session, user_id: int, title: str):
+    active = get_active_session(db, user_id)
+    if active:
+        return "active_session_exists"
+
+    session = WorkoutSession(
+        user_id=user_id,
+        workout_id=None,
+        title=title.strip() or "Workout",
+        started_at=datetime.utcnow(),
+        ended_at=None,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def update_session_title(db: Session, session_id: int, user_id: int, title: str):
+    session = _get_session_if_owned(db, session_id, user_id)
+    if not session:
+        return None
+
+    session.title = title.strip() or session.title
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def add_exercise_to_session(db: Session, session_id: int, user_id: int, exercise_id: int, order_index: int | None, notes: str | None):
+    session = _get_session_if_owned(db, session_id, user_id)
+    if not session:
+        return None
+
+    ex = get_exercise(db, exercise_id)
+    if not ex:
+        return "exercise_not_found"
+
+    if order_index is None:
+        # append to end
+        current_max = (
+            db.query(func.coalesce(func.max(SessionExercise.order_index), -1))
+            .filter(SessionExercise.session_id == session_id)
+            .scalar()
+        )
+        order_index = int(current_max) + 1
+
+    se = SessionExercise(
+        session_id=session.id,
+        exercise_id=exercise_id,
+        order_index=order_index,
+        notes=notes,
+        planned_reps=None,
+        planned_weight=None,
+    )
+    db.add(se)
+    db.commit()
+    db.refresh(se)
+    return se
 
 # =========================
 # Sets (session-based)
