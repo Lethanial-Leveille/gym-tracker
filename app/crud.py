@@ -122,7 +122,6 @@ def delete_workout(db, workout_id: int, user_id: int) -> str | bool:
     if not workout:
         return False
 
-    # Block deletion if any sessions reference this workout
     sessions_count = (
         db.query(func.count(WorkoutSession.id))
         .filter(WorkoutSession.workout_id == workout_id, WorkoutSession.user_id == user_id)
@@ -132,7 +131,6 @@ def delete_workout(db, workout_id: int, user_id: int) -> str | bool:
     if sessions_count and int(sessions_count) > 0:
         return "has_sessions"
 
-    # Safe to delete: remove plan links first
     db.query(WorkoutExercise).filter(WorkoutExercise.workout_id == workout_id).delete()
 
     db.delete(workout)
@@ -198,7 +196,6 @@ def update_exercise(
     if not ex:
         return None
 
-    # Only update keys that exist on the model
     allowed = {"name", "primary_muscle", "secondary_muscles", "classification", "notes"}
     for key, value in updates.items():
         if key in allowed:
@@ -220,7 +217,6 @@ def delete_exercise(db: Session, exercise_id: int) -> bool:
 
 
 def get_exercise_stats(db: Session, exercise_id: int, user_id: int):
-    # best weight across all sets for this exercise for this user
     best_weight = (
         db.query(func.max(SetEntry.weight))
         .select_from(SetEntry)
@@ -234,7 +230,6 @@ def get_exercise_stats(db: Session, exercise_id: int, user_id: int):
         .scalar()
     )
 
-    # last logged weight, approximated by newest session then newest set id
     last_weight = (
         db.query(SetEntry.weight)
         .select_from(SetEntry)
@@ -292,14 +287,21 @@ def start_workout_session(db: Session, workout_id: int, user_id: int):
     if not workout:
         return None
 
-    # Enforce: only one active session per user
     active = get_active_session(db, user_id)
     if active:
         return "active_session_exists"
 
+    # ── FIX (Bug 3) ─────────────────────────────────────────────────
+    # Previously: title was never set here, so it defaulted to "Workout"
+    #             for every template-started session.
+    # Fix:        Copy the workout template's title into the session.
+    # Why:        The frontend displays session.title, so the user sees
+    #             "Push A" instead of generic "Workout".
+    # ────────────────────────────────────────────────────────────────
     session = WorkoutSession(
         user_id=user_id,
         workout_id=workout_id,
+        title=workout.title,          # <-- THE FIX
         started_at=datetime.utcnow(),
         ended_at=None,
     )
@@ -307,7 +309,6 @@ def start_workout_session(db: Session, workout_id: int, user_id: int):
     db.commit()
     db.refresh(session)
 
-    # Clone template exercises into session exercises
     plan_items = sorted(workout.exercises, key=lambda x: x.order_index)
     for we in plan_items:
         se = SessionExercise(
@@ -341,7 +342,6 @@ def finish_workout_session(db: Session, session_id: int, user_id: int, duration_
 
     session.duration_minutes = duration
 
-    # optional: store "last duration" on the plan
     workout = db.query(Workout).filter(Workout.id == session.workout_id).first()
     if workout:
         workout.duration_minutes = duration
@@ -398,7 +398,6 @@ def add_exercise_to_session(db: Session, session_id: int, user_id: int, exercise
         return "exercise_not_found"
 
     if order_index is None:
-        # append to end
         current_max = (
             db.query(func.coalesce(func.max(SessionExercise.order_index), -1))
             .filter(SessionExercise.session_id == session_id)

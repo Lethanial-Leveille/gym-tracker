@@ -55,7 +55,6 @@ origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if origins_env:
     origins_list = [o.strip() for o in origins_env.split(",") if o.strip()]
 else:
-    # Safe dev defaults so you don’t brick local testing if Render env var is missing
     origins_list = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 app.add_middleware(
@@ -160,7 +159,7 @@ def delete_workout(
     if result == "has_sessions":
         raise HTTPException(
             status_code=409,
-            detail="Can’t delete this workout because it has session history. Delete the sessions first (or keep it as history).",
+            detail="Can't delete this workout because it has session history. Delete the sessions first (or keep it as history).",
         )
 
     return {"message": "Workout deleted successfully"}
@@ -275,7 +274,7 @@ def add_exercise_to_workout(
 
 
 # =========================
-# Sessions
+# Sessions (template-based start)
 # =========================
 @app.post("/workouts/{workout_id}/start", response_model=schemas.WorkoutSessionResponse)
 def start_workout(
@@ -298,6 +297,180 @@ def start_workout(
     return result
 
 
+# ── FIX (Bug 1) ─────────────────────────────────────────────────────
+# All routes below were MISSING.  crud.py had the logic but main.py
+# never created HTTP endpoints for them.  The frontend was calling
+# these URLs and getting 404 / 405 errors.
+#
+# ARCHITECTURE NOTE (for learning):
+# FastAPI follows a common pattern: "routes → crud → models"
+#   • Routes (this file):  handle HTTP, validate input, return responses
+#   • CRUD (crud.py):      business logic, DB queries
+#   • Models (db_models):  table definitions
+# If any layer is missing, the chain breaks.  That's what happened here.
+# ─────────────────────────────────────────────────────────────────────
+
+
+# =========================
+# Sessions (blank / freestyle)
+# =========================
+@app.post("/sessions/start", response_model=schemas.WorkoutSessionResponse, status_code=201)
+def start_blank_session(
+    payload: schemas.StartSessionRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Start a freestyle session (no template).  The frontend calls this
+    from SessionPage when the user types a name and hits Start."""
+    result = crud.start_blank_session(db, user_id, payload.title)
+
+    if result == "active_session_exists":
+        active = crud.get_active_session(db, user_id)
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "You already have an active session", "active_session_id": active.id},
+        )
+
+    return result
+
+
+@app.patch("/sessions/{session_id}/title", response_model=schemas.WorkoutSessionResponse)
+def update_session_title(
+    session_id: int,
+    payload: schemas.UpdateSessionTitleRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Rename an active session.  Frontend calls this from the title
+    input + 'Save name' button on SessionPage."""
+    session = crud.update_session_title(db, session_id, user_id, payload.title)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+# =========================
+# Add exercise to a live session
+# =========================
+@app.post(
+    "/sessions/{session_id}/exercises",
+    response_model=schemas.SessionExerciseResponse,
+    status_code=201,
+)
+def add_exercise_to_session(
+    session_id: int,
+    payload: schemas.AddSessionExerciseRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Search for an exercise, then add it to the current session.
+    Frontend calls this when the user taps 'Add' next to a search result."""
+    result = crud.add_exercise_to_session(
+        db=db,
+        session_id=session_id,
+        user_id=user_id,
+        exercise_id=payload.exercise_id,
+        order_index=payload.order_index,
+        notes=payload.notes,
+    )
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if result == "exercise_not_found":
+        raise HTTPException(status_code=404, detail="Exercise not found")
+
+    return result
+
+
+# =========================
+# Sets (log reps & weight inside a session)
+# =========================
+@app.post(
+    "/session-exercises/{session_exercise_id}/sets",
+    response_model=schemas.SetEntryResponse,
+    status_code=201,
+)
+def add_set(
+    session_exercise_id: int,
+    payload: schemas.SetEntryCreate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Log one set (reps + optional weight).  Frontend calls this when
+    the user hits 'Add set' under an exercise in SessionPage."""
+    result = crud.add_set_entry(db, session_exercise_id, payload.reps, payload.weight, user_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    return result
+
+
+@app.get(
+    "/session-exercises/{session_exercise_id}/sets",
+    response_model=list[schemas.SetEntryResponse],
+)
+def list_sets(
+    session_exercise_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    result = crud.list_set_entries(db, session_exercise_id, user_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    return result
+
+
+@app.put(
+    "/session-exercises/{session_exercise_id}/sets/{set_entry_id}",
+    response_model=schemas.SetEntryResponse,
+)
+def update_set(
+    session_exercise_id: int,
+    set_entry_id: int,
+    payload: schemas.SetEntryUpdate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    result = crud.update_set_entry(
+        db, session_exercise_id, set_entry_id, user_id,
+        reps=payload.reps, weight=payload.weight,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    if result == "set_not_found":
+        raise HTTPException(status_code=404, detail="Set not found")
+    return result
+
+
+@app.delete("/session-exercises/{session_exercise_id}/sets/{set_entry_id}")
+def delete_set(
+    session_exercise_id: int,
+    set_entry_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    result = crud.delete_set_entry(db, session_exercise_id, set_entry_id, user_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    if result is False:
+        raise HTTPException(status_code=404, detail="Set not found")
+    return {"message": "Set deleted"}
+
+
+@app.delete("/session-exercises/{session_exercise_id}/sets")
+def clear_sets(
+    session_exercise_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    result = crud.clear_set_entries(db, session_exercise_id, user_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session exercise not found")
+    return {"message": "All sets cleared"}
+
+
+# =========================
+# Session lifecycle (existing routes, unchanged)
+# =========================
 @app.get("/sessions/active", response_model=schemas.WorkoutSessionResponse | None)
 def get_active_session(
     db: Session = Depends(get_db),
@@ -369,7 +542,6 @@ def reset_my_data(
     if not getattr(user, "is_admin", False):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
 
-    # Collect ids to delete safely, no join-bulk-delete weirdness
     session_ids = [
         sid for (sid,) in db.query(WorkoutSession.id)
         .filter(WorkoutSession.user_id == user.id)
