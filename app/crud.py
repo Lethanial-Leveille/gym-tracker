@@ -359,6 +359,28 @@ def get_workout_session_detail(db: Session, session_id: int, user_id: int):
     session.session_exercises.sort(key=lambda x: x.order_index)
     return session
 
+
+# ── NEW: list finished sessions (for History page) ──────
+def list_sessions(
+    db: Session,
+    user_id: int,
+    skip: int = 0,
+    limit: int = 20,
+):
+    """Return completed sessions (ended_at IS NOT NULL), newest first."""
+    query = db.query(WorkoutSession).filter(
+        WorkoutSession.user_id == user_id,
+        WorkoutSession.ended_at.isnot(None),
+    )
+    total = query.count()
+    items = (
+        query.order_by(WorkoutSession.started_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return {"total": total, "skip": skip, "limit": limit, "items": items}
+
 def start_blank_session(db: Session, user_id: int, title: str):
     active = get_active_session(db, user_id)
     if active:

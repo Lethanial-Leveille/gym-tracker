@@ -471,6 +471,20 @@ def clear_sets(
 # =========================
 # Session lifecycle (existing routes, unchanged)
 # =========================
+
+# ── NEW: list finished sessions (for History page) ──────
+@app.get("/sessions", response_model=schemas.SessionsListResponse)
+def list_sessions(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Paginated list of completed sessions, newest first.
+    The History page calls this on load."""
+    return crud.list_sessions(db, user_id, skip, limit)
+
+
 @app.get("/sessions/active", response_model=schemas.WorkoutSessionResponse | None)
 def get_active_session(
     db: Session = Depends(get_db),
