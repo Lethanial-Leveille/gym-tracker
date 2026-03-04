@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -8,9 +8,23 @@ from alembic.config import Config
 
 from app import crud, schemas
 from app.routers.auth import router as auth_router
-from app.deps import get_db, get_current_user_id, require_admin
+from app.deps import (
+    get_db,
+    get_current_user_id,
+    require_admin,
+    get_current_user,
+)
+from app.db_models import (
+    Workout,
+    WorkoutExercise,
+    WorkoutSession,
+    SessionExercise,
+    SetEntry,
+)
 
-
+# -------------------------
+# Startup helpers
+# -------------------------
 def run_migrations():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
@@ -30,14 +44,23 @@ def run_seed() -> int:
     return seed_exercises()
 
 
+# -------------------------
+# App
+# -------------------------
 app = FastAPI(title="Gym Tracker")
 app.include_router(auth_router)
 
-origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")]
+# CORS
+origins_env = os.getenv("CORS_ORIGINS", "").strip()
+if origins_env:
+    origins_list = [o.strip() for o in origins_env.split(",") if o.strip()]
+else:
+    # Safe dev defaults so you don’t brick local testing if Render env var is missing
+    origins_list = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,7 +74,10 @@ def startup():
     created = run_seed()
     print(f"STARTUP: seed done, created={created}")
 
-# ---------- Health ----------
+
+# -------------------------
+# Health
+# -------------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -126,16 +152,23 @@ def delete_workout(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    deleted = crud.delete_workout(db, workout_id, user_id)
-    if not deleted:
+    result = crud.delete_workout(db, workout_id, user_id)
+
+    if result is False:
         raise HTTPException(status_code=404, detail="Workout not found")
+
+    if result == "has_sessions":
+        raise HTTPException(
+            status_code=409,
+            detail="Can’t delete this workout because it has session history. Delete the sessions first (or keep it as history).",
+        )
+
     return {"message": "Workout deleted successfully"}
 
 
 # =========================
 # Exercises (library)
 # =========================
-
 @app.post("/exercises", response_model=schemas.ExerciseResponse, status_code=201)
 def create_exercise(
     ex: schemas.ExerciseCreate,
@@ -184,6 +217,7 @@ def get_exercise_stats(
 
     return crud.get_exercise_stats(db=db, exercise_id=exercise_id, user_id=user_id)
 
+
 @app.patch("/exercises/{exercise_id}", response_model=schemas.ExerciseResponse)
 def patch_exercise(
     exercise_id: int,
@@ -211,6 +245,7 @@ def remove_exercise(
     if not ok:
         raise HTTPException(status_code=404, detail="Exercise not found")
     return {"message": "Exercise deleted"}
+
 
 # =========================
 # Attach exercise to workout plan
@@ -257,7 +292,7 @@ def start_workout(
         active = crud.get_active_session(db, user_id)
         raise HTTPException(
             status_code=409,
-            detail={"message": "You already have an active session", "active_session_id": active.id}
+            detail={"message": "You already have an active session", "active_session_id": active.id},
         )
 
     return result
@@ -322,143 +357,47 @@ def get_session_detail(
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
-@app.post("/sessions/start", response_model=schemas.WorkoutSessionResponse, status_code=201)
-def start_blank_session(
-    payload: schemas.StartSessionRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    result = crud.start_blank_session(db=db, user_id=user_id, title=payload.title)
-
-    if result == "active_session_exists":
-        active = crud.get_active_session(db, user_id)
-        raise HTTPException(
-            status_code=409,
-            detail={"message": "You already have an active session", "active_session_id": active.id}
-        )
-
-    return result
-
-
-@app.patch("/sessions/{session_id}/title", response_model=schemas.WorkoutSessionResponse)
-def patch_session_title(
-    session_id: int,
-    payload: schemas.UpdateSessionTitleRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    updated = crud.update_session_title(db=db, session_id=session_id, user_id=user_id, title=payload.title)
-    if not updated:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return updated
-
-
-@app.post("/sessions/{session_id}/exercises", response_model=schemas.SessionExerciseResponse, status_code=201)
-def add_exercise_to_session(
-    session_id: int,
-    payload: schemas.AddSessionExerciseRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    result = crud.add_exercise_to_session(
-        db=db,
-        session_id=session_id,
-        user_id=user_id,
-        exercise_id=payload.exercise_id,
-        order_index=payload.order_index,
-        notes=payload.notes,
-    )
-    if result is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if result == "exercise_not_found":
-        raise HTTPException(status_code=404, detail="Exercise not found")
-    return result
-
 
 # =========================
-# Sets (session exercise)
+# Admin: reset my data (safe deletes)
 # =========================
-@app.post("/session-exercises/{session_exercise_id}/sets", response_model=schemas.SetEntryResponse, status_code=201)
-def create_set_entry(
-    session_exercise_id: int,
-    payload: schemas.SetEntryCreate,
+@app.delete("/admin/reset-my-data")
+def reset_my_data(
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user=Depends(get_current_user),
 ):
-    entry = crud.add_set_entry(
-        db=db,
-        session_exercise_id=session_exercise_id,
-        reps=payload.reps,
-        weight=payload.weight,
-        user_id=user_id,
-    )
-    if not entry:
-        raise HTTPException(status_code=404, detail="Session exercise not found")
-    return entry
+    if not getattr(user, "is_admin", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
 
+    # Collect ids to delete safely, no join-bulk-delete weirdness
+    session_ids = [
+        sid for (sid,) in db.query(WorkoutSession.id)
+        .filter(WorkoutSession.user_id == user.id)
+        .all()
+    ]
 
-@app.get("/session-exercises/{session_exercise_id}/sets", response_model=list[schemas.SetEntryResponse])
-def list_sets(
-    session_exercise_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    items = crud.list_set_entries(db=db, session_exercise_id=session_exercise_id, user_id=user_id)
-    if items is None:
-        raise HTTPException(status_code=404, detail="Session exercise not found")
-    return items
+    if session_ids:
+        se_ids = [
+            seid for (seid,) in db.query(SessionExercise.id)
+            .filter(SessionExercise.session_id.in_(session_ids))
+            .all()
+        ]
 
+        if se_ids:
+            db.query(SetEntry).filter(SetEntry.session_exercise_id.in_(se_ids)).delete(synchronize_session=False)
+            db.query(SessionExercise).filter(SessionExercise.id.in_(se_ids)).delete(synchronize_session=False)
 
-@app.patch("/session-exercises/{session_exercise_id}/sets/{set_entry_id}", response_model=schemas.SetEntryResponse)
-def patch_set_entry(
-    session_exercise_id: int,
-    set_entry_id: int,
-    payload: schemas.SetEntryUpdate,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    updated = crud.update_set_entry(
-        db=db,
-        session_exercise_id=session_exercise_id,
-        set_entry_id=set_entry_id,
-        user_id=user_id,
-        reps=payload.reps,
-        weight=payload.weight,
-    )
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Session exercise not found")
-    if updated == "set_not_found":
-        raise HTTPException(status_code=404, detail="Set entry not found")
-    return updated
+        db.query(WorkoutSession).filter(WorkoutSession.id.in_(session_ids)).delete(synchronize_session=False)
 
+    workout_ids = [
+        wid for (wid,) in db.query(Workout.id)
+        .filter(Workout.user_id == user.id)
+        .all()
+    ]
 
-@app.delete("/session-exercises/{session_exercise_id}/sets/{set_entry_id}")
-def delete_set_entry(
-    session_exercise_id: int,
-    set_entry_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    deleted = crud.delete_set_entry(
-        db=db,
-        session_exercise_id=session_exercise_id,
-        set_entry_id=set_entry_id,
-        user_id=user_id,
-    )
-    if deleted is None:
-        raise HTTPException(status_code=404, detail="Session exercise not found")
-    if deleted is False:
-        raise HTTPException(status_code=404, detail="Set entry not found")
-    return {"message": "Set entry deleted"}
+    if workout_ids:
+        db.query(WorkoutExercise).filter(WorkoutExercise.workout_id.in_(workout_ids)).delete(synchronize_session=False)
+        db.query(Workout).filter(Workout.id.in_(workout_ids)).delete(synchronize_session=False)
 
-
-@app.delete("/session-exercises/{session_exercise_id}/sets")
-def clear_sets(
-    session_exercise_id: int,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    ok = crud.clear_set_entries(db=db, session_exercise_id=session_exercise_id, user_id=user_id)
-    if ok is None:
-        raise HTTPException(status_code=404, detail="Session exercise not found")
-    return {"message": "All sets cleared"}
+    db.commit()
+    return {"message": "Reset complete"}

@@ -113,10 +113,27 @@ def update_workout(db: Session, workout_id: int, title: str, duration_minutes: i
     return workout
 
 
-def delete_workout(db: Session, workout_id: int, user_id: int) -> bool:
-    workout = _get_workout_if_owned(db, workout_id, user_id)
+def delete_workout(db, workout_id: int, user_id: int) -> str | bool:
+    workout = (
+        db.query(Workout)
+        .filter(Workout.id == workout_id, Workout.user_id == user_id)
+        .first()
+    )
     if not workout:
         return False
+
+    # Block deletion if any sessions reference this workout
+    sessions_count = (
+        db.query(func.count(WorkoutSession.id))
+        .filter(WorkoutSession.workout_id == workout_id, WorkoutSession.user_id == user_id)
+        .scalar()
+    )
+
+    if sessions_count and int(sessions_count) > 0:
+        return "has_sessions"
+
+    # Safe to delete: remove plan links first
+    db.query(WorkoutExercise).filter(WorkoutExercise.workout_id == workout_id).delete()
 
     db.delete(workout)
     db.commit()
